@@ -4,6 +4,7 @@ import (
 	spec "code.cloudfoundry.org/guardian/gardener/container-spec"
 	"code.cloudfoundry.org/guardian/rundmc/goci"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"math"
 )
 
 type Windows struct{}
@@ -13,16 +14,22 @@ func (w Windows) Apply(bndl goci.Bndl, spec spec.DesiredContainerSpec) (goci.Bnd
 		return bndl, nil
 	}
 
-	bndl = bndl.WithWindows(*spec.BaseConfig.Windows)
+	var (
+		limit  = spec.Limits.Memory.LimitInBytes
+		shares = shares(limit)
+	)
 
-	limit := uint64(spec.Limits.Memory.LimitInBytes)
-	bndl = bndl.WithWindowsMemoryLimit(specs.WindowsMemoryResources{Limit: &limit})
+	return bndl.WithWindows(*spec.BaseConfig.Windows).
+		WithWindowsMemoryLimit(specs.WindowsMemoryResources{Limit: &limit}).
+		WithWindowsCPUShares(specs.WindowsCPUResources{Shares: &shares}), nil
+}
+// min(10000*(application_memory / 8 GB), 10000)
+func shares(memInBytes uint64) uint16 {
+	var (
+		eightGBInBytes float64 = 8589934592
+		memPercent             = float64(memInBytes) / eightGBInBytes
+	)
 
-	shares := uint16(spec.Limits.CPU.LimitInShares)
-	if spec.Limits.CPU.Weight > 0 {
-		shares = uint16(spec.Limits.CPU.Weight)
-	}
-	bndl = bndl.WithWindowsCPUShares(specs.WindowsCPUResources{Shares: &shares})
-
-	return bndl, nil
+	memPercent = memPercent * 10000
+	return uint16(math.Min(10000, memPercent))
 }
